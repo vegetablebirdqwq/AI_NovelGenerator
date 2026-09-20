@@ -1,6 +1,7 @@
 # llm_adapters.py
 # -*- coding: utf-8 -*-
 import logging
+import os
 from typing import Optional
 from langchain_openai import ChatOpenAI, AzureChatOpenAI
 from google import genai
@@ -50,13 +51,22 @@ class DeepSeekAdapter(BaseLLMAdapter):
         self.temperature = temperature
         self.timeout = timeout
 
+        # --- 本地补丁 ---
+        # DeepSeek 的思考模式默认开启，会让每章生成慢数倍、token 消耗翻倍，
+        # 且官方文档明确说明「思考模式下 temperature 参数不生效」。
+        # 写小说场景默认关闭。如需开启（推理类任务）：设 DEEPSEEK_THINKING=enabled
+        extra_body = None
+        if os.environ.get("DEEPSEEK_THINKING", "disabled").strip().lower() != "enabled":
+            extra_body = {"thinking": {"type": "disabled"}}
+
         self._client = ChatOpenAI(
             model=self.model_name,
             api_key=self.api_key,
             base_url=self.base_url,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
-            timeout=self.timeout
+            timeout=self.timeout,
+            extra_body=extra_body,
         )
 
     def invoke(self, prompt: str) -> str:

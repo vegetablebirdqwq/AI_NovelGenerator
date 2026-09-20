@@ -19,3 +19,17 @@ test.py
 uv.lock
 .python-version
 pyproject.toml
+
+# ---- 本地运行产物 ----
+/logs/
+*.bak.txt
+*.bak
+
+# ---- 本地作品注册表（含真实路径与选题，用 books.example.json 作模板）----
+books.json
+
+# ---- 本地个人文档（不参与开源）----
+工作流.md
+项目存档.md
+使用说明.md
+使用说明.txt

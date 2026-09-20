@@ -1,0 +1,38 @@
+{
+    "_说明": "多作品生产注册表模板。复制本文件为 books.json 后按需修改。books.json 已被 .gitignore 排除，不会提交。",
+    "_并发": "concurrency=1 表示串行执行；日志按作品分轨道呈现，因此看起来像并行。",
+    "_大纲策略": "outline_chapters = 大纲规划到第几章（可以铺很远）；total_chapters = 正文先写到第几章。大纲生成成本极低，铺远可为后续续写留足空间；要续写时把 total_chapters 调大再跑一次即可，大纲已经在那儿了。",
+
+    "concurrency": 1,
+
+    "books": [
+        {
+            "id": "demo_book_1",
+            "name": "示例作品一",
+            "platform": "示例平台A",
+            "enabled": true,
+            "_赛道": "示例赛道标注",
+            "topic": "一句话故事梗概，用于生成小说架构。",
+            "genre": "男频·示例类型标签",
+            "source_dir": "D:\\novel-workspace\\_src\\demo_book_1",
+            "output_dir": "D:\\novel-workspace\\release\\示例平台A\\示例作品一",
+            "total_chapters": 50,
+            "outline_chapters": 50,
+            "chapter_words": 2200
+        },
+        {
+            "id": "demo_book_2",
+            "name": "示例作品二（停用示例）",
+            "platform": "示例平台B",
+            "enabled": false,
+            "_备注": "enabled=false 的作品不会被调度器处理，可用于暂时冻结某个作品。",
+            "topic": "另一句话故事梗概。",
+            "genre": "男频·示例类型标签",
+            "source_dir": "D:\\novel-workspace\\_src\\demo_book_2",
+            "output_dir": "D:\\novel-workspace\\release\\示例平台B\\示例作品二",
+            "total_chapters": 50,
+            "outline_chapters": 50,
+            "chapter_words": 2200
+        }
+    ]
+}

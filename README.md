@@ -1,282 +1,167 @@
-# 📖 Automatic Novel Generation Tool
+# 网文长篇 AI 创作流水线（多平台）
 
-[中文文档](./README_zh-CN.md) | English | [日本語](./README_ja.md) | [Français](./README_fr-FR.md) | [Sawcuengh](./README_sawcuengh.md)
-
-> ~~Currently I don't have much energy to maintain this project. The project brings no revenue, and with graduation approaching I have many other priorities. If time permits in the future I may consider a refactor using newer technologies. — 2025/09/24~~
->
->- ~~**(2026/03/09):** This project will be refactored soon, featuring modern implementations and fresh creative concepts.~~
->
-> **Update (2026/03/25):** The refactored version has completed initial development (only the main framework is done, features are not yet available) and will be uploaded to the dev branch within a week. Subsequent development will also be synchronized on the branch.
-
-<div align="center">
-  
-✨ **Core Features** ✨
-
-| Module                | Key Capabilities                        |
-|-----------------------|-----------------------------------------|
-| 🎨 Novel Setting Workshop | Worldbuilding / Character Design / Plot Blueprint |
-| 📖 Intelligent Chapter Generation | Multi-stage generation to ensure plot coherence |
-| 🧠 State Tracking System | Character development trajectory / Foreshadowing management |
-| 🔍 Semantic Search Engine | Vector-based long-term context consistency |
-| 📚 Knowledge Base Integration | Supports local document references |
-| ✅ Automatic Proofreading | Detects plot contradictions and logical conflicts |
-| 🖥 Visual Workbench | Full-process GUI for configuration / generation / proofreading |
-
-</div>
-
-> A multifunctional novel generator built on large language models. Helps you efficiently create long-form stories with consistent settings and rigorous logic.
+> **本项目 fork 自 [AI_NovelGenerator](https://github.com/YILING0013/AI_NovelGenerator)（AGPL-3.0）。**
+> 上游提供小说架构生成、章节草稿生成、向量检索等**引擎能力**；
+> 本仓库在其之上构建了**多作品调度、平台约束、质量评测、运维监控**四层，用于把单个作品的手工生成，
+> 变成可批量调度、可断点续传、可量化验收的生产流水线。
 
 ---
 
-## 📑 Table of Contents
-1. [Environment Preparation](#-environment-preparation)  
-2. [Project Structure](#-project-structure)  
-3. [Configuration Guide](#⚙️-configuration-guide)  
-4. [Run Instructions](#🚀-run-instructions)  
-5. [User Guide](#📘-user-guide)  
-6. [FAQ](#❓-faq)  
+## 要解决的两个问题
+
+长篇网络文学创作有两个绕不开的问题，而这个项目的四层结构就是针对它们设计的：
+
+**一、设定一致性。** 写到几十万字之后，人物状态、道具传承、势力关系这些信息会不断累积，
+一旦超出模型的上下文窗口就必然衰减。靠摘要压缩只能延缓，不能根治——**需要把叙事知识从
+"上下文里的临时信息"，提升为可独立检索、可校验的持久资产。**
+
+**二、质量不可控。** 模型对"篇幅区间、句子长度、对话密度、结构节奏"这类硬指标的执行是不稳定的。
+同一套提示词，跑十次能出十种结果。**纯靠提示词只能提高概率，要保证结果必须加程序化兜底。**
 
 ---
 
-## 🛠 Environment Preparation
-Ensure the environment meets the following requirements:
-- **Python 3.9+** (recommended 3.10–3.12)
-- **pip** package manager
-- Valid API keys:
-   - Cloud services: OpenAI / DeepSeek, etc.
-   - Local services: Ollama or other OpenAI-compatible interfaces
+## 架构
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  编排容错层   pipeline.py                                     │
+│  多作品轮转调度 · 单 API 串行执行 · 断点续传 · 失败恢复        │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ 每次调度推进一步
+     ┌──────────┬───────────┼───────────┬──────────┐
+     ▼          ▼           ▼           ▼          ▼
+  S1 架构    S2 大纲     S3 正文     S4 文本润色  S5 导出
+  小说设定   章节目录   草稿+定稿    自然度优化   合并+分章
+                           │           │
+                           │           ├── 字数兜底    （超出区间自动压缩 / 不足自动补写）
+                           │           └── 对白密度兜底（低于阈值自动改写为对白）
+                           │
+                           └── 叙事记忆层：向量检索召回跨章节上下文
+```
+
+### 五层职责
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| **编排容错** | `pipeline.py` | 多作品轮转；同一时刻只发一个 API 调用（避免限流与文件冲突）；任意环节中断可无损接续；各作品路径与配置完全隔离 |
+| **叙事记忆** | 基于上游向量检索 | BGE-M3（1024 维）章节级语义索引，按相关性召回前文摘要、角色状态与设定片段并注入上下文 |
+| **内容约束** | `prompt_definitions.py` | 把平台规格与叙事规范（篇幅区间、句长分布、对话密度、结构节奏、一致性红线）编码为模型可遵循、可自检的显式规则 |
+| **质量评测** | `_check_book.py` | 7 维文本量化质检，对全量章节自动打分，定位系统性失效模式 |
+| **运维监控** | `进度面板.ps1` | 实时进度面板：进度条、阶段、速度、预计完成时间、成品质量快照 |
 
 ---
 
-## 📥 Installation
-1. **Download the project**  
-    - Download the project ZIP from [GitHub](https://github.com) or clone the repository:
-       ```bash
-       git clone https://github.com/YILING0013/AI_NovelGenerator
-       ```
+## 文件说明
 
+| 文件 | 说明 |
+|---|---|
+| `pipeline.py` | **多作品生产调度器**（核心）。支持 `--book` 指定作品、`--status` 看状态、`--dry-run` 干跑校验 |
+| `prompt_definitions.py` | 提示词定义（基于上游改写，注入了平台风格铁律与章节硬性约束） |
+| `polish.py` | 文本自然度优化：分段重写，消除模板化表达、统一句式节奏 |
+| `_check_book.py` | **质量体检工具**：按作品统计 7 维指标，输出达标 / 超标清单 |
+| `_repolish.py` | 强制重跑润色（换提示词后重刷、单章验证） |
+| `_redo_chapter.py` | 强制重生成指定章节（草稿 + 定稿），自动备份原稿 |
+| `_progress.py` | 命令行进度快照 |
+| `进度面板.ps1` | 实时进度面板（3 秒刷新，含速度与 ETA） |
+| `开始生产.ps1` | 启动生产并打开面板；已在运行则不重复启动 |
+| `books.example.json` | **作品注册表模板**——复制为 `books.json` 后填写自己的作品 |
 
-2. **Install build tools (optional)**  
-    - If some packages fail to install, visit [Visual Studio Build Tools](https://visualstudio.microsoft.com/zh-hans/visual-cpp-build-tools/) to download and install C++ build tools required by some modules.
-    - By default the installer includes MSBuild only; make sure to select **C++ Desktop Development** from the workload list.
+> 导出与分章由 `pipeline.py` 的 **S5 导出阶段**完成：按作品自身的输出目录合并完整稿，
+> 同时生成分章文件与章节标题清单，不依赖任何全局配置。
 
-3. **Install dependencies and run**  
-    - Open a terminal and change to the project directory:
-       ```bash
-       cd AI_NovelGenerator
-       ```
-    - (Optional) Create and activate virtual environment:
-       ```bash
-       python -m venv .venv
-       # if that doesn't work, try:
-       # python3 -m venv .venv
-       ```
-       ```
-       # On Windows:
-       .venv/Scripts/activate
-       ```
-       ```
-       # On Linux/Mac:
-       source .venv/bin/activate
-       ```
-    - Install project dependencies:
-       ```bash
-       pip install -r requirements.txt
-       ```
-    - After installation run the main program:
-       ```bash
-       python main.py
-       ```
+---
 
-If some dependencies are still missing, manually run:
+## 快速开始
+
 ```bash
-pip install <package-name>
-```
-to install them.
+# 1. 克隆
+git clone <your-fork-url>
+cd <repo>
 
+# 2. 安装依赖（建议 venv）
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+pip install -r requirements.txt
 
-## 🗂 Project Structure
+# 3. 配置密钥
+copy config.example.json config.json
+#    编辑 config.json，填入大模型 API Key 与 embedding API Key
+
+# 4. 配置作品
+copy books.example.json books.json
+#    编辑 books.json，填写作品梗概、类型、目录与目标章数
+
+# 5. 跑起来
+python pipeline.py --dry-run     # 先干跑校验，不调 API
+python pipeline.py               # 正式跑（自动断点续传）
+python pipeline.py --status      # 随时查看各作品进度
 ```
-novel-generator/
-├── main.py                      # Entry file, runs the GUI
-├── consistency_checker.py       # Consistency checks to prevent plot conflicts
-|—— chapter_directory_parser.py  # Directory parsing
-|—— embedding_adapters.py        # Embedding interface wrappers
-|—— llm_adapters.py              # LLM interface wrappers
-├── prompt_definitions.py        # AI prompt templates
-├── utils.py                     # Utility functions and file operations
-├── config_manager.py            # Configuration manager (API keys, base URL)
-├── config.json                  # User configuration (optional)
-├── novel_generator/             # Core chapter generation logic
-├── ui/                          # Graphical user interface
-└── vectorstore/                 # (Optional) Local vector DB storage
-```
+
+> 想只看进度？Windows 下双击 `进度面板.ps1`，或在 PowerShell 里执行
+> `powershell -ExecutionPolicy Bypass -File 进度面板.ps1`。
 
 ---
 
-## ⚙️ Configuration Guide
-### 📌 Basic configuration (`config.json`)
-See `config.example.json` for a complete example. Current configs are grouped by model presets and task routing:
-```json
-{
-   "last_llm_config_name": "DeepSeek V4 Flash",
-   "llm_configs": {
-      "DeepSeek V4 Flash": {
-         "api_key": "",
-         "base_url": "https://api.deepseek.com",
-         "interface_format": "DeepSeek",
-         "model_name": "deepseek-v4-flash",
-         "temperature": 0.7,
-         "max_tokens": 8192,
-         "timeout": 600
-      },
-      "DeepSeek V4 Pro": {
-         "api_key": "",
-         "base_url": "https://api.deepseek.com",
-         "interface_format": "DeepSeek",
-         "model_name": "deepseek-v4-pro",
-         "temperature": 0.7,
-         "max_tokens": 32768,
-         "timeout": 600
-      },
-      "Gemini 3.5 Flash": {
-         "api_key": "",
-         "base_url": "https://generativelanguage.googleapis.com/v1beta",
-         "interface_format": "Gemini",
-         "model_name": "gemini-3.5-flash",
-         "temperature": 0.7,
-         "max_tokens": 32768,
-         "timeout": 600
-      }
-   },
-   "embedding_configs": {
-      "OpenAI": {
-         "api_key": "",
-         "base_url": "https://api.openai.com/v1",
-         "interface_format": "OpenAI",
-         "model_name": "text-embedding-3-small",
-         "retrieval_k": 4
-      }
-   },
-   "choose_configs": {
-      "architecture_llm": "Gemini 3.5 Flash",
-      "chapter_outline_llm": "Gemini 3.5 Flash",
-      "prompt_draft_llm": "DeepSeek V4 Flash",
-      "final_chapter_llm": "DeepSeek V4 Pro",
-      "consistency_review_llm": "DeepSeek V4 Flash"
-   }
-}
-```
+## 质量评测：7 维指标
 
-### 🔧 Explanation
-1. **Generation model configuration**
-   - `api_key`: API key for the LLM service
-   - `base_url`: API endpoint (for local services use the Ollama address)
-   - `interface_format`: Interface mode
-   - `model_name`: Main generation model (e.g., `deepseek-v4-flash`, `gemini-3.5-flash`, `gpt-5.5`)
-   - `temperature`: Creativity parameter (0–1, higher is more creative)
-   - `max_tokens`: Maximum model response length
+`_check_book.py` 对每一章自动计算以下指标，并按阈值给出达标 / 超标判定：
 
-2. **Embedding model configuration**
-   - `embedding_model_name`: Embedding model name (e.g., `text-embedding-3-small`, `gemini-embedding-2`, or Ollama's `nomic-embed-text`)
-   - `embedding_url`: Service endpoint
-   - `embedding_retrieval_k`: Number of nearest neighbors to retrieve
+| 指标 | 说明 | 阈值 |
+|---|---|---|
+| 字数 | 去空白字符数 | 2200–2800 |
+| 对话占比 | 中文引号内字符数 ÷ 全文字符数 | ≥ 40% |
+| 句长分布 | 超过 25 字的句子占比 | ≤ 30% |
+| AI 高频套话密度 | "顿时、瞬间、不禁、微微"等词的命中次数 | 越少越好 |
+| 比喻模板命中率 | "仿佛、宛如、如同、好似"及裸"像"字比喻 | 0（已排除"好像/图像/想象"等误报） |
+| 抒情腔密度 | "百感交集、五味杂陈、久久不能平静"等 | 0 |
+| 段落结构 | 最长段落字数 | ≤ 160 |
 
-3. **Novel parameters**
-   - `topic`: Core story theme
-   - `genre`: Genre
-   - `num_chapters`: Total number of chapters
-   - `word_number`: Target words per chapter
-   - `filepath`: Path to save generated files
-
----
-
-## 🚀 Run Instructions
-### Method 1 — Run with Python
 ```bash
-python main.py
+python _check_book.py <book_id>          # 查草稿
+python _check_book.py <book_id> final    # 查润色后的成品
+python _check_book.py <book_id> final 20 30   # 只看第 20–30 章
 ```
-This launches the GUI for interactive use.
-
-### Method 2 — Build an executable
-If you want to run the tool on machines without Python, package it with **PyInstaller**:
-```bash
-pip install pyinstaller
-pyinstaller main.spec
-```
-After packaging an executable (e.g., `main.exe` on Windows) will appear in the `dist/` folder.
 
 ---
 
-## 📘 User Guide
-1. **After launching the app, fill in the basic parameters:**  
-   - **API Key & Base URL** (e.g., `https://api.openai.com/v1`)  
-   - **Model name** (e.g., `deepseek-v4-flash`, `gemini-3.5-flash`, `gpt-5.5`)
-   - **Temperature** (0–1, controls creative variance)  
-   - **Topic** (e.g., "AI uprising in a post-apocalyptic world")  
-   - **Genre** (e.g., "Sci-fi" / "Fantasy" / "Urban Fantasy")  
-   - **Number of chapters** and **words per chapter** (e.g., 10 chapters × ~3000 words)  
-   - **Save path** (create a new output folder for results)
+## 实测数据
 
-2. **Click "Step1. Generate Settings"**  
-   - The system will generate, based on topic/genre/chapter count:  
-     - `Novel_setting.txt`: Worldbuilding, characters, trigger points and foreshadowing.  
-   - You can view or edit these settings after generation.
-
-3. **Click "Step2. Generate Directory"**  
-   - The system will use `Novel_setting.txt` to produce:  
-     - `Novel_directory.txt`: Chapter titles and short prompts.  
-   - You can review and modify chapter titles and descriptions.
-
-4. **Click "Step3. Generate Chapter Draft"**  
-   - Before generating a chapter you can:  
-     - Set the chapter number (e.g., `1`)  
-     - Provide chapter-specific guidance in the "This chapter guidance" box  
-   - When you generate a chapter the system will:  
-     - Read prior settings, `Novel_directory.txt`, and finalized chapters  
-     - Use vector retrieval to recall relevant context for coherence  
-     - Produce an outline (`outline_X.txt`) and chapter text (`chapter_X.txt`)  
-   - You can view and edit the draft in the editor pane.
-
-5. **Click "Step4. Finalize Current Chapter"**  
-   - The system will:  
-     - Update the global summary (`global_summary.txt`)  
-     - Update character states (`character_state.txt`)  
-     - Update the vector store (so future chapters can use the latest info)  
-     - Update major plot points (e.g., `plot_arcs.txt`)  
-   - After finalizing you will see the finalized text in `chapter_X.txt`.
-
-6. **Consistency check (optional)**  
-   - Click the "[Optional] Consistency Proofread" button to scan the latest chapter for conflicts (character logic, plot contradictions, etc.).  
-   - If conflicts are detected, detailed messages will appear in the log area.
-
-7. **Repeat steps 4–6** until all chapters are generated and finalized.
-
-> Vector retrieval tips:
-> 1. Explicitly set the embedding interface and model name.
-> 2. For local Ollama embeddings start the Ollama service first:
->    ```bash
->    ollama serve  # Start the service
->    ollama pull nomic-embed-text  # Download/enable the model
->    ```
-> 3. Clear the `vectorstore` directory after switching embedding models.
-> 4. For cloud embeddings ensure the API permissions are enabled.
+| 项 | 数值 |
+|---|---|
+| 覆盖平台 | 3 个（各自规格独立适配） |
+| 产出规模 | 150 章 / 约 47 万字 |
+| 单章成本 | ¥0.16–0.2 |
+| 单章耗时 | 约 2.5 分钟（串行执行） |
+| 流水线阶段 | 架构 → 大纲 → 正文 → 润色 → 导出，全链路断点续传 |
 
 ---
 
-## ❓ FAQ
-### Q1: Expecting value: line 1 column 1 (char 0)
+## 设计取舍
 
-This error usually indicates the API did not return valid JSON—sometimes an HTML error page or other unexpected content was returned.
+几个刻意为之的决定，以及原因：
 
-### Q2: HTTP/1.1 504 Gateway Timeout?
-
-Check the stability of the API endpoint and network connectivity.
-
-### Q3: How do I switch Embedding providers?
-
-Enter the new provider settings in the GUI fields for embedding configuration.
+- **串行而非并发。** 同一时刻只发一个 API 调用。并发会带来限流、写文件冲突和成本失控三个问题，
+  而流水线的瓶颈本来就在模型响应速度上，并发收益有限。日志按作品分轨道打印，所以**看起来**像并行。
+- **程序兜底而非只靠提示词。** 润色阶段结束后会复核字数与对白密度，不达标就自动补一轮。
+  模型对硬指标的执行不稳定，兜底层是保证产出可用性的最后一道防线。
+- **大纲与正文的目标章数分离。** `outline_chapters` 可以远大于 `total_chapters`——大纲生成成本极低，
+  一次铺远可以为后续续写留足空间，要续写时只需调大正文目标再跑一次。
 
 ---
 
-If you have further questions or feature requests, please open an issue on the project repository.
+## 上游项目与本仓库的关系
+
+本仓库是 [AI_NovelGenerator](https://github.com/YILING0013/AI_NovelGenerator) 的 fork。
+
+- **来自上游**：小说架构生成、章节草稿生成、章节定稿、向量检索与 embedding 适配、LLM 适配层、GUI
+- **本仓库新增**：多作品调度器（`pipeline.py`）、平台约束与提示词改写（`prompt_definitions.py`）、
+  文本润色工序（`polish.py`）、质量评测工具（`_check_book.py`）、
+  重跑与重生成工具（`_repolish.py` / `_redo_chapter.py`）、运维监控（`进度面板.ps1` 等）
+
+上游的安装与 GUI 使用说明请见 [原项目 README](https://github.com/YILING0013/AI_NovelGenerator)。
+
+---
+
+## License
+
+[AGPL-3.0](LICENSE) — 继承自上游项目。任何基于本项目的衍生作品同样需要以 AGPL-3.0 开源。
